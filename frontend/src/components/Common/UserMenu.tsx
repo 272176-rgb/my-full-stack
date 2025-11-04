@@ -20,7 +20,6 @@ const UserMenu = () => {
         <MenuRoot>
           <MenuTrigger asChild p={2}>
             <Button data-testid="user-menu" variant="solid" maxW="sm" truncate>
-              <FaUserAstronaut fontSize="18" />
               <Text>{user?.full_name || "User"}</Text>
             </Button>
           </MenuTrigger>
@@ -34,7 +33,6 @@ const UserMenu = () => {
                 py={2}
                 style={{ cursor: "pointer" }}
               >
-                <FiUser fontSize="18px" />
                 <Box flex="1">My Profile</Box>
               </MenuItem>
             </Link>
@@ -46,7 +44,6 @@ const UserMenu = () => {
               onClick={handleLogout}
               style={{ cursor: "pointer" }}
             >
-              <FiLogOut />
               Log Out
             </MenuItem>
           </MenuContent>
