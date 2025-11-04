@@ -17,7 +17,6 @@ interface SidebarItemsProps {
 }
 
 interface Item {
-  icon: IconType
   title: string
   path: string
 }
