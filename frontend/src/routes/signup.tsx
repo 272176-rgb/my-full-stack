@@ -64,14 +64,6 @@ function SignUp() {
         gap={4}
         centerContent
       >
-        <Image
-          src={Logo}
-          alt="FastAPI logo"
-          height="auto"
-          maxW="2xs"
-          alignSelf="center"
-          mb={4}
-        />
         <Field
           invalid={!!errors.full_name}
           errorText={errors.full_name?.message}
