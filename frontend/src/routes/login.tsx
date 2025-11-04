@@ -65,9 +65,9 @@ function Login() {
     >
       <Field
         invalid={!!errors.username}
-        errorText={errors.username?.message || !!error}
+        errorText={errors.username?.message || (error ? String(error) : undefined)}
       >
-
+        <InputGroup>
           <Input
             {...register("username", {
               required: "Username is required",
@@ -78,20 +78,24 @@ function Login() {
           />
         </InputGroup>
       </Field>
+
       <PasswordInput
-        type="password"}
+        type="password"
         {...register("password", passwordRules())}
         placeholder="Password"
         errors={errors}
       />
+
       <RouterLink to="/recover-password" className="main-link">
         Forgot Password?
       </RouterLink>
+
       <Button variant="solid" type="submit" loading={isSubmitting} size="md">
         Log In
       </Button>
+
       <Text>
-        Don't have an account?{" "}
+        Don&apos;t have an account?{" "}
         <RouterLink to="/signup" className="main-link">
           Sign Up
         </RouterLink>
@@ -99,3 +103,5 @@ function Login() {
     </Container>
   )
 }
+
+export default Login
