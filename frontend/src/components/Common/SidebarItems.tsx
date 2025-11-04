@@ -27,7 +27,7 @@ const SidebarItems = ({ onClose }: SidebarItemsProps) => {
     ? [...items, { title: "Admin", path: "/admin" }]
     : items
 
-  const listItems = finalItems.map(({ icon, title, path }) => (
+  const listItems = finalItems.map(({title, path }) => (
     <RouterLink key={title} to={path} onClick={onClose}>
       <Flex
         gap={4}
