@@ -5,7 +5,6 @@ import {
   redirect,
 } from "@tanstack/react-router"
 import { type SubmitHandler, useForm } from "react-hook-form"
-import { FiLock, FiMail } from "react-icons/fi"
 
 import type { Body_login_login_access_token as AccessToken } from "@/client"
 import { Button } from "@/components/ui/button"
@@ -68,7 +67,7 @@ function Login() {
         invalid={!!errors.username}
         errorText={errors.username?.message || !!error}
       >
-        <InputGroup w="100%" startElement={<FiMail />}>
+
           <Input
             {...register("username", {
               required: "Username is required",
@@ -80,8 +79,7 @@ function Login() {
         </InputGroup>
       </Field>
       <PasswordInput
-        type="password"
-        startElement={<FiLock />}
+        type="password"}
         {...register("password", passwordRules())}
         placeholder="Password"
         errors={errors}
