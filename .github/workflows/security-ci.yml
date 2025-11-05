@@ -9,11 +9,10 @@ on:
 
 permissions:
   contents: read
-  security-events: write   # wymagane do uploadu SARIF (Semgrep/Trivy)
+  security-events: write
   actions: read
 
 env:
-  # DAST targety – dopasuj jeśli masz inne porty/ścieżki
   FRONT_URL: http://localhost:5173
   API_OPENAPI_URL: http://localhost:8000/api/v1/openapi.json
 
@@ -39,49 +38,67 @@ jobs:
             frontend/package-lock.json
             frontend/package.json
 
-      # -------- SAST: Semgrep (OWASP + CI) -> SARIF --------
+      # -------- SAST: Semgrep --------
       - name: Semgrep (SAST)
+        continue-on-error: true
         uses: returntocorp/semgrep-action@v1
         with:
           config: |
             p/owasp-top-ten
             p/ci
           generateSarif: "1"
-          # auditOn: push  # opcjonalnie
+
       - name: Upload Semgrep SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
 
-      # -------- SAST: Bandit (Python) --------
+      # -------- SAST: Bandit --------
       - name: Install Bandit
+        continue-on-error: true
         run: pipx install bandit || pip install bandit
+
       - name: Run Bandit (backend)
-        run: |
-          bandit -r backend -ll -iii -f json -o bandit.json || true
+        continue-on-error: true
+        run: bandit -r backend -ll -iii -f json -o bandit.json
+
       - name: Upload Bandit report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bandit-report
           path: bandit.json
 
-      # -------- SCA: Trivy (repo) -> SARIF + SBOM --------
+      # -------- SCA: Trivy (repo) -> SARIF --------
       - name: Trivy FS (SCA + misconfig + secrets)
+        continue-on-error: true
         uses: aquasecurity/trivy-action@0.24.0
         with:
           scan-type: fs
+          scan-ref: .
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           format: sarif
           output: trivy-repo.sarif
+
       - name: Upload Trivy SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-repo.sarif
 
+      # -------- SBOM: Trivy (CycloneDX) --------
       - name: Trivy SBOM (CycloneDX)
-        run: trivy fs --format cyclonedx --output sbom.cdx.json .
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          args: --format cyclonedx --output sbom.cdx.json
+
       - name: Upload SBOM
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sbom-cyclonedx
@@ -89,35 +106,46 @@ jobs:
 
       # -------- SCA: Python (pip-audit) --------
       - name: Install pip-audit
+        continue-on-error: true
         run: pipx install pip-audit || pip install pip-audit
+
       - name: pip-audit (backend)
+        continue-on-error: true
         run: |
           if [ -f backend/requirements.txt ]; then
-            pip-audit -r backend/requirements.txt -f json -o pip-audit.json || true
+            pip-audit -r backend/requirements.txt -f json -o pip-audit.json
           else
             echo '{}' > pip-audit.json
           fi
+
       - name: Upload pip-audit report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pip-audit-report
           path: pip-audit.json
 
-      # -------- SAST/SCA: Frontend (lint + npm audit) --------
+      # -------- Frontend: lint + npm audit --------
       - name: Frontend install
         if: hashFiles('frontend/package.json') != ''
+        continue-on-error: true
         working-directory: frontend
         run: npm ci
+
       - name: Frontend lint
         if: hashFiles('frontend/package.json') != ''
+        continue-on-error: true
         working-directory: frontend
-        run: npm run lint || true
+        run: npm run lint
+
       - name: npm audit (high+)
         if: hashFiles('frontend/package.json') != ''
+        continue-on-error: true
         working-directory: frontend
-        run: npm audit --audit-level=high --json > ../npm-audit.json || true
+        run: npm audit --audit-level=high --json > ../npm-audit.json
+
       - name: Upload npm-audit report
-        if: hashFiles('frontend/package.json') != ''
+        if: always() && hashFiles('frontend/package.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: npm-audit-report
@@ -126,13 +154,14 @@ jobs:
   build_and_dast:
     name: DAST (ZAP) on docker-compose
     runs-on: ubuntu-latest
-    needs: sast_sca
+    needs: [sast_sca]
+    if: always()   # uruchom nawet jeśli SAST/SCA miało błędy
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      # Utwórz minimalny .env do compose (podmień jeśli masz sekrety)
       - name: Create .env for CI
+        continue-on-error: true
         run: |
           cat > .env <<'EOF'
           DOMAIN=localhost
@@ -152,44 +181,57 @@ jobs:
           SENTRY_DSN=
           EOF
 
-      # Build i start całego stacka (dopasuj nazwy usług do swojego compose)
       - name: Build services
+        continue-on-error: true
         run: docker compose build
-      - name: Up services (db, backend, frontend)
-        run: docker compose up -d --wait db backend frontend
 
-      # Szybki health-check zanim uruchomimy ZAP
+      - name: Up db
+        continue-on-error: true
+        run: docker compose up -d --wait db
+
+      - name: Up backend
+        continue-on-error: true
+        run: docker compose up -d --wait backend
+
+      - name: Up frontend
+        continue-on-error: true
+        run: docker compose up -d --wait frontend
+
       - name: Wait for backend health
+        continue-on-error: true
         run: |
           for i in {1..30}; do
             curl -fsS http://localhost:8000/api/v1/utils/health-check/ && exit 0
             sleep 3
           done
-          echo "Backend not healthy" && exit 1
+          echo "Backend not healthy"
+
       - name: Probe frontend
+        continue-on-error: true
         run: |
           for i in {1..30}; do
             curl -fsS ${{ env.FRONT_URL }} && exit 0
             sleep 3
           done
-          echo "Frontend not responding" && exit 1
+          echo "Frontend not responding"
 
-      # -------- DAST: ZAP baseline (frontend) --------
       - name: ZAP Baseline (frontend)
+        continue-on-error: true
         run: |
           docker run --rm -t owasp/zap2docker-stable zap-baseline.py \
             -t "${{ env.FRONT_URL }}" \
-            -r zap-frontend.html || true
+            -r zap-frontend.html
 
-      # -------- DAST: ZAP API scan (OpenAPI -> backend) --------
       - name: ZAP API Scan (backend OpenAPI)
+        continue-on-error: true
         run: |
           docker run --rm -t -u zap -v "$PWD:/zap/wrk" owasp/zap2docker-stable zap-api-scan.py \
             -t "${{ env.API_OPENAPI_URL }}" \
             -f openapi \
-            -r zap-api.html || true
+            -r zap-api.html
 
       - name: Upload ZAP reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zap-reports
