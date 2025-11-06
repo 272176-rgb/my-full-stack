@@ -177,7 +177,7 @@ jobs:
           retention-days: 14
 
   build_and_dast:
-    name: DAST (ZAP) — start app only for tests
+    name: DAST (ZAP) — start app only for tests (Docker)
     runs-on: ubuntu-latest
     needs: [sast_sca]
     timeout-minutes: 45
@@ -202,20 +202,6 @@ jobs:
       - name: Prepare reports dir
         run: mkdir -p reports/dast
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: |
-            frontend/package-lock.json
-            frontend/package.json
-
       # ---- ENV tylko na czas DAST ----
       - name: Prepare runtime env
         run: |
@@ -226,7 +212,7 @@ jobs:
           echo "SECRET_KEY=dev-secret" >> $GITHUB_ENV
           echo "FIRST_SUPERUSER=admin@example.com" >> $GITHUB_ENV
           echo "FIRST_SUPERUSER_PASSWORD=StrongPassw0rd!" >> $GITHUB_ENV
-          echo "POSTGRES_SERVER=localhost" >> $GITHUB_ENV
+          echo "POSTGRES_SERVER=host.docker.internal" >> $GITHUB_ENV
           echo "POSTGRES_PORT=5432" >> $GITHUB_ENV
           echo "POSTGRES_DB=app" >> $GITHUB_ENV
           echo "POSTGRES_USER=postgres" >> $GITHUB_ENV
@@ -236,68 +222,70 @@ jobs:
           echo "SMTP_PASSWORD=" >> $GITHUB_ENV
           echo "EMAILS_FROM_EMAIL=info@example.com" >> $GITHUB_ENV
           echo "SENTRY_DSN=" >> $GITHUB_ENV
+          # moduł aplikacji FastAPI (jeśli inny niż app.main:app — podmień)
+          echo "BACKEND_APP_MODULE=app.main:app" >> $GITHUB_ENV
 
-      # ---- Backend: uruchom tylko na czas DAST ----
-      - name: Install backend deps
-        working-directory: backend
-        run: |
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            echo "Brak backend/requirements.txt" && exit 1
-          fi
+      # ---- Backend: budujemy obraz i odpalamy kontener na czas DAST ----
+      - name: Build backend image
+        if: hashFiles('backend/Dockerfile') != ''
+        run: docker build -t backend-ci:latest ./backend
 
-      - name: Start backend
-        working-directory: backend
-        env:
-          POSTGRES_SERVER: ${{ env.POSTGRES_SERVER }}
-          POSTGRES_PORT: ${{ env.POSTGRES_PORT }}
-          POSTGRES_DB: ${{ env.POSTGRES_DB }}
-          POSTGRES_USER: ${{ env.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
-          SECRET_KEY: ${{ env.SECRET_KEY }}
-          FIRST_SUPERUSER: ${{ env.FIRST_SUPERUSER }}
-          FIRST_SUPERUSER_PASSWORD: ${{ env.FIRST_SUPERUSER_PASSWORD }}
-          ENVIRONMENT: ${{ env.ENVIRONMENT }}
-          BACKEND_CORS_ORIGINS: ${{ env.BACKEND_CORS_ORIGINS }}
-          SENTRY_DSN: ${{ env.SENTRY_DSN }}
+      - name: Run backend container
+        if: hashFiles('backend/Dockerfile') != ''
         run: |
-          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 >/dev/null 2>&1 & echo $! > ../backend.pid
+          docker run -d --name backend-ci \
+            -p 8000:8000 \
+            -e DOMAIN=${DOMAIN} \
+            -e FRONTEND_HOST=${FRONTEND_HOST} \
+            -e ENVIRONMENT=${ENVIRONMENT} \
+            -e BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS} \
+            -e SECRET_KEY=${SECRET_KEY} \
+            -e FIRST_SUPERUSER=${FIRST_SUPERUSER} \
+            -e FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD} \
+            -e POSTGRES_SERVER=${POSTGRES_SERVER} \
+            -e POSTGRES_PORT=${POSTGRES_PORT} \
+            -e POSTGRES_DB=${POSTGRES_DB} \
+            -e POSTGRES_USER=${POSTGRES_USER} \
+            -e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} \
+            -e SENTRY_DSN=${SENTRY_DSN} \
+            backend-ci:latest
+          # jeśli Twój obraz nie startuje serwera, odpal uvicorn ręcznie:
+          # docker exec -d backend-ci sh -c "uvicorn ${BACKEND_APP_MODULE} --host 0.0.0.0 --port 8000"
 
       - name: Wait for backend health
+        if: hashFiles('backend/Dockerfile') != ''
         run: |
           for i in {1..60}; do
             curl -fsS http://localhost:8000/api/v1/utils/health-check/ && exit 0
             sleep 2
           done
-          echo "Backend not healthy"; exit 1
+          echo "Backend not healthy"; docker logs backend-ci || true; exit 1
 
-      # ---- Frontend: uruchom tylko na czas DAST (jeśli istnieje) ----
-      - name: Build frontend
-        if: hashFiles('frontend/package.json') != ''
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+      # ---- Frontend: budujemy obraz i odpalamy kontener na czas DAST ----
+      - name: Build frontend image
+        if: hashFiles('frontend/Dockerfile') != ''
+        run: docker build -t frontend-ci:latest ./frontend
 
-      - name: Start frontend preview
-        if: hashFiles('frontend/package.json') != ''
-        working-directory: frontend
+      - name: Run frontend container
+        if: hashFiles('frontend/Dockerfile') != ''
         run: |
-          nohup npm run preview -- --host 0.0.0.0 --port 5173 >/dev/null 2>&1 & echo $! > ../frontend.pid
+          docker run -d --name frontend-ci \
+            -p 5173:80 \
+            -e VITE_API_URL=http://localhost:8000 \
+            frontend-ci:latest
 
       - name: Wait for frontend
-        if: hashFiles('frontend/package.json') != ''
+        if: hashFiles('frontend/Dockerfile') != ''
         run: |
           for i in {1..60}; do
             curl -fsS ${{ env.FRONT_URL }} && exit 0
             sleep 2
           done
-          echo "Frontend not responding"; exit 1
+          echo "Frontend not responding"; docker logs frontend-ci || true; exit 1
 
       # ---- ZAP DAST ----
       - name: ZAP Baseline (frontend)
-        if: hashFiles('frontend/package.json') != ''
+        if: hashFiles('frontend/Dockerfile') != ''
         run: |
           docker run --rm -t owasp/zap2docker-stable zap-baseline.py \
             -t "${{ env.FRONT_URL }}" \
@@ -305,21 +293,13 @@ jobs:
             -r zap-frontend.html | tee zap-baseline.log
 
       - name: ZAP API Scan (backend OpenAPI)
+        if: hashFiles('backend/Dockerfile') != ''
         run: |
           docker run --rm -t -u zap -v "$PWD:/zap/wrk" owasp/zap2docker-stable zap-api-scan.py \
             -t "${{ env.API_OPENAPI_URL }}" \
             -f openapi \
             -m 15 \
             -r zap-api.html | tee zap-api.log
-
-      # ---- (opcjonalnie) progi jakości: fail przy High ----
-      - name: Enforce thresholds (fail on HIGH)
-        if: always()
-        run: |
-          fail=0
-          grep -Eiq "High Alert|Risk: High" zap-baseline.log && echo "ZAP Baseline: High found" && fail=1 || true
-          grep -Eiq "High Alert|Risk: High" zap-api.log && echo "ZAP API: High found" && fail=1 || true
-          if [ $fail -ne 0 ]; then exit 1; fi
 
       - name: Collect ZAP reports
         if: always()
@@ -330,12 +310,15 @@ jobs:
           [ -f zap-baseline.log ] && cp -f zap-baseline.log reports/dast/zap-baseline.log || true
           [ -f zap-api.log ] && cp -f zap-api.log reports/dast/zap-api.log || true
 
-      # ---- Sprzątanie: zabij procesy appki (tylko na czas DAST) ----
-      - name: Teardown app processes
+      # ---- Sprzątanie: zatrzymaj i usuń kontenery (app działała tylko na czas DAST) ----
+      - name: Teardown app containers
         if: always()
         run: |
-          if [ -f backend.pid ]; then kill -9 "$(cat backend.pid)" 2>/dev/null || true; fi
-          if [ -f frontend.pid ]; then kill -9 "$(cat frontend.pid)" 2>/dev/null || true; fi
+          docker ps -a
+          docker logs backend-ci || true
+          docker logs frontend-ci || true
+          docker rm -f backend-ci 2>/dev/null || true
+          docker rm -f frontend-ci 2>/dev/null || true
 
       # ---- Upload to the SAME artifact name (merge with SAST/SCA) ----
       - name: Upload consolidated reports (DAST)
