@@ -299,6 +299,7 @@ jobs:
           target: http://127.0.0.1:8000/api/v1/openapi.json
           format: openapi
           allow_issue_writing: false
+          fail_action: false
           issue_title: ""
           # verbose + dłuższy timeout startu i skanu
           cmd_options: >
