@@ -282,6 +282,9 @@ jobs:
           tail -n 200 backend.log || true
           exit 1
 
+      - name: Ensure DAST reports dir
+        run: mkdir -p reports/dast
+
       - name: ZAP API Scan (official action)
         uses: zaproxy/action-api-scan@v0.10.0
         with:
@@ -294,6 +297,8 @@ jobs:
             -d
             -m 15
             -r zap-api.html
+            -w reports/dast/zap-api.md
+            -J reports/dast/zap-api.json
         env:
           # (opcjonalnie) jeżeli chcesz zwiększyć czas na start ZAP
           ZAP_STARTUP_WAIT: "120"
