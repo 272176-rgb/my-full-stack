@@ -205,25 +205,33 @@ jobs:
       # ---- ENV tylko na czas DAST ----
       - name: Prepare runtime env
         run: |
-          echo "DOMAIN=localhost" >> $GITHUB_ENV
-          echo "FRONTEND_HOST=http://localhost:5173" >> $GITHUB_ENV
-          echo "ENVIRONMENT=local" >> $GITHUB_ENV
-          echo "BACKEND_CORS_ORIGINS=*" >> $GITHUB_ENV
-          echo "SECRET_KEY=dev-secret" >> $GITHUB_ENV
-          echo "FIRST_SUPERUSER=admin@example.com" >> $GITHUB_ENV
-          echo "FIRST_SUPERUSER_PASSWORD=StrongPassw0rd!" >> $GITHUB_ENV
-          echo "POSTGRES_SERVER=host.docker.internal" >> $GITHUB_ENV
-          echo "POSTGRES_PORT=5432" >> $GITHUB_ENV
-          echo "POSTGRES_DB=app" >> $GITHUB_ENV
-          echo "POSTGRES_USER=postgres" >> $GITHUB_ENV
-          echo "POSTGRES_PASSWORD=changethis" >> $GITHUB_ENV
-          echo "SMTP_HOST=" >> $GITHUB_ENV
-          echo "SMTP_USER=" >> $GITHUB_ENV
-          echo "SMTP_PASSWORD=" >> $GITHUB_ENV
-          echo "EMAILS_FROM_EMAIL=info@example.com" >> $GITHUB_ENV
-          echo "SENTRY_DSN=" >> $GITHUB_ENV
-          # moduł aplikacji FastAPI (jeśli inny niż app.main:app — podmień)
-          echo "BACKEND_APP_MODULE=app.main:app" >> $GITHUB_ENV
+          echo 'DOMAIN=localhost' >> $GITHUB_ENV
+          echo 'FRONTEND_HOST=http://localhost:5173' >> $GITHUB_ENV
+          echo 'ENVIRONMENT=local' >> $GITHUB_ENV
+          # CORS musi być listą URL (JSON string)
+          echo 'BACKEND_CORS_ORIGINS=["http://localhost:5173","http://127.0.0.1:5173","http://localhost"]' >> $GITHUB_ENV
+          echo 'SECRET_KEY=dev-secret' >> $GITHUB_ENV
+          echo 'FIRST_SUPERUSER=admin@example.com' >> $GITHUB_ENV
+          echo 'FIRST_SUPERUSER_PASSWORD=StrongPassw0rd!' >> $GITHUB_ENV
+
+          # DB przez host.docker.internal (zob. --add-host niżej)
+          echo 'POSTGRES_SERVER=host.docker.internal' >> $GITHUB_ENV
+          echo 'POSTGRES_PORT=5432' >> $GITHUB_ENV
+          echo 'POSTGRES_DB=app' >> $GITHUB_ENV
+          echo 'POSTGRES_USER=postgres' >> $GITHUB_ENV
+          echo 'POSTGRES_PASSWORD=changethis' >> $GITHUB_ENV
+
+          echo 'SMTP_HOST=' >> $GITHUB_ENV
+          echo 'SMTP_USER=' >> $GITHUB_ENV
+          echo 'SMTP_PASSWORD=' >> $GITHUB_ENV
+          echo 'EMAILS_FROM_EMAIL=info@example.com' >> $GITHUB_ENV
+          echo 'SENTRY_DSN=' >> $GITHUB_ENV
+
+          # brakowało w Settings:
+          echo 'PROJECT_NAME=app' >> $GITHUB_ENV
+
+          # moduł aplikacji (jeśli obraz nie startuje serwera sam)
+          echo 'BACKEND_APP_MODULE=app.main:app' >> $GITHUB_ENV
 
       # ---- Backend: budujemy obraz i odpalamy kontener na czas DAST ----
       - name: Build backend image
@@ -234,23 +242,28 @@ jobs:
         if: hashFiles('backend/Dockerfile') != ''
         run: |
           docker run -d --name backend-ci \
+            --add-host=host.docker.internal:host-gateway \
             -p 8000:8000 \
-            -e DOMAIN=${DOMAIN} \
-            -e FRONTEND_HOST=${FRONTEND_HOST} \
-            -e ENVIRONMENT=${ENVIRONMENT} \
-            -e BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS} \
-            -e SECRET_KEY=${SECRET_KEY} \
-            -e FIRST_SUPERUSER=${FIRST_SUPERUSER} \
-            -e FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD} \
-            -e POSTGRES_SERVER=${POSTGRES_SERVER} \
-            -e POSTGRES_PORT=${POSTGRES_PORT} \
-            -e POSTGRES_DB=${POSTGRES_DB} \
-            -e POSTGRES_USER=${POSTGRES_USER} \
-            -e POSTGRES_PASSWORD=${POSTGRES_PASSWORD} \
-            -e SENTRY_DSN=${SENTRY_DSN} \
+            -e DOMAIN="${DOMAIN}" \
+            -e FRONTEND_HOST="${FRONTEND_HOST}" \
+            -e ENVIRONMENT="${ENVIRONMENT}" \
+            -e BACKEND_CORS_ORIGINS='${BACKEND_CORS_ORIGINS}' \
+            -e SECRET_KEY="${SECRET_KEY}" \
+            -e FIRST_SUPERUSER="${FIRST_SUPERUSER}" \
+            -e FIRST_SUPERUSER_PASSWORD="${FIRST_SUPERUSER_PASSWORD}" \
+            -e POSTGRES_SERVER="${POSTGRES_SERVER}" \
+            -e POSTGRES_PORT="${POSTGRES_PORT}" \
+            -e POSTGRES_DB="${POSTGRES_DB}" \
+            -e POSTGRES_USER="${POSTGRES_USER}" \
+            -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
+            -e SENTRY_DSN="${SENTRY_DSN}" \
+            -e PROJECT_NAME="${PROJECT_NAME}" \
             backend-ci:latest
-          # jeśli Twój obraz nie startuje serwera, odpal uvicorn ręcznie:
+
+          # Jeśli Twój obraz NIE uruchamia serwera HTTP sam (np. CMD nie startuje uvicorn),
+          # odkomentuj poniższą linię:
           # docker exec -d backend-ci sh -c "uvicorn ${BACKEND_APP_MODULE} --host 0.0.0.0 --port 8000"
+
 
       - name: Wait for backend health
         if: hashFiles('backend/Dockerfile') != ''
