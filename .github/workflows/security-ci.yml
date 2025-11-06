@@ -282,22 +282,22 @@ jobs:
           tail -n 200 backend.log || true
           exit 1
 
-      # ---- ZAP DAST (API Scan) ----
-      - name: Pre-pull ZAP image
-        run: docker pull ghcr.io/zaproxy/zaproxy:stable
+      - name: ZAP API Scan (official action)
+        uses: zaproxy/action-api-scan@v0.10.0
+        with:
+          target: http://127.0.0.1:8000/api/v1/openapi.json
+          format: openapi
+          # verbose + dłuższy timeout startu i skanu
+          cmd_options: >
+            -d
+            -m 15
+            -r zap-api.html
+        env:
+          # (opcjonalnie) jeżeli chcesz zwiększyć czas na start ZAP
+          ZAP_STARTUP_WAIT: "120"
+          # wyłącz automatyczne issue w PR-ach
+          GITHUB_TOKEN: ""
 
-      - name: ZAP API Scan (backend OpenAPI) — host network
-        run: |
-          set -e
-          # podejście 1: host network (najprostsze na GH-hosted Linux runners)
-          docker run --rm -t --network host \
-            -v "$PWD:/zap/wrk" -w /zap/wrk \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-api-scan.py \
-              -t "http://127.0.0.1:8000/api/v1/openapi.json" \
-              -f openapi \
-              -m 15 \
-              -r zap-api.html | tee zap-api.log
 
       - name: Debug (on failure)
         if: failure()
