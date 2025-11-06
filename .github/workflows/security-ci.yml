@@ -202,38 +202,30 @@ jobs:
       - name: Prepare reports dir
         run: mkdir -p reports/dast
 
-      # ---- ENV tylko na czas DAST ----
+      # ---- ENV na czas DAST (zgodne z Pydantic v2 + brakujące pola) ----
       - name: Prepare runtime env
         run: |
           echo 'DOMAIN=localhost' >> $GITHUB_ENV
           echo 'FRONTEND_HOST=http://localhost:5173' >> $GITHUB_ENV
           echo 'ENVIRONMENT=local' >> $GITHUB_ENV
-          # CORS musi być listą URL (JSON string)
           echo 'BACKEND_CORS_ORIGINS=["http://localhost:5173","http://127.0.0.1:5173","http://localhost"]' >> $GITHUB_ENV
           echo 'SECRET_KEY=dev-secret' >> $GITHUB_ENV
           echo 'FIRST_SUPERUSER=admin@example.com' >> $GITHUB_ENV
           echo 'FIRST_SUPERUSER_PASSWORD=StrongPassw0rd!' >> $GITHUB_ENV
-
-          # DB przez host.docker.internal (zob. --add-host niżej)
+          echo 'PROJECT_NAME=app' >> $GITHUB_ENV
+          # DB z service-containera via host-gateway
           echo 'POSTGRES_SERVER=host.docker.internal' >> $GITHUB_ENV
           echo 'POSTGRES_PORT=5432' >> $GITHUB_ENV
           echo 'POSTGRES_DB=app' >> $GITHUB_ENV
           echo 'POSTGRES_USER=postgres' >> $GITHUB_ENV
           echo 'POSTGRES_PASSWORD=changethis' >> $GITHUB_ENV
-
           echo 'SMTP_HOST=' >> $GITHUB_ENV
           echo 'SMTP_USER=' >> $GITHUB_ENV
           echo 'SMTP_PASSWORD=' >> $GITHUB_ENV
           echo 'EMAILS_FROM_EMAIL=info@example.com' >> $GITHUB_ENV
           echo 'SENTRY_DSN=' >> $GITHUB_ENV
 
-          # brakowało w Settings:
-          echo 'PROJECT_NAME=app' >> $GITHUB_ENV
-
-          # moduł aplikacji (jeśli obraz nie startuje serwera sam)
-          echo 'BACKEND_APP_MODULE=app.main:app' >> $GITHUB_ENV
-
-      # ---- Backend: budujemy obraz i odpalamy kontener na czas DAST ----
+      # ---- Backend: build + run z nadpisaną komendą (nasłuch z zewnątrz) ----
       - name: Build backend image
         if: hashFiles('backend/Dockerfile') != ''
         run: docker build -t backend-ci:latest ./backend
@@ -258,12 +250,8 @@ jobs:
             -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD}" \
             -e SENTRY_DSN="${SENTRY_DSN}" \
             -e PROJECT_NAME="${PROJECT_NAME}" \
-            backend-ci:latest
-
-          # Jeśli Twój obraz NIE uruchamia serwera HTTP sam (np. CMD nie startuje uvicorn),
-          # odkomentuj poniższą linię:
-          # docker exec -d backend-ci sh -c "uvicorn ${BACKEND_APP_MODULE} --host 0.0.0.0 --port 8000"
-
+            backend-ci:latest \
+            fastapi run app/main.py --host 0.0.0.0 --port 8000 --workers 4
 
       - name: Wait for backend health
         if: hashFiles('backend/Dockerfile') != ''
@@ -274,17 +262,16 @@ jobs:
           done
           echo "Backend not healthy"; docker logs backend-ci || true; exit 1
 
-      # ---- Frontend: budujemy obraz i odpalamy kontener na czas DAST ----
+      # ---- Frontend: build + run (jeśli jest Dockerfile) ----
       - name: Build frontend image
         if: hashFiles('frontend/Dockerfile') != ''
-        run: docker build -t frontend-ci:latest ./frontend
+        run: docker build --build-arg VITE_API_URL=http://localhost:8000 -t frontend-ci:latest ./frontend
 
       - name: Run frontend container
         if: hashFiles('frontend/Dockerfile') != ''
         run: |
           docker run -d --name frontend-ci \
             -p 5173:80 \
-            -e VITE_API_URL=http://localhost:8000 \
             frontend-ci:latest
 
       - name: Wait for frontend
@@ -314,6 +301,7 @@ jobs:
             -m 15 \
             -r zap-api.html | tee zap-api.log
 
+
       - name: Collect ZAP reports
         if: always()
         run: |
@@ -323,13 +311,10 @@ jobs:
           [ -f zap-baseline.log ] && cp -f zap-baseline.log reports/dast/zap-baseline.log || true
           [ -f zap-api.log ] && cp -f zap-api.log reports/dast/zap-api.log || true
 
-      # ---- Sprzątanie: zatrzymaj i usuń kontenery (app działała tylko na czas DAST) ----
+      # ---- Sprzątanie: kontenery działały tylko na czas DAST ----
       - name: Teardown app containers
         if: always()
         run: |
-          docker ps -a
-          docker logs backend-ci || true
-          docker logs frontend-ci || true
           docker rm -f backend-ci 2>/dev/null || true
           docker rm -f frontend-ci 2>/dev/null || true
 
