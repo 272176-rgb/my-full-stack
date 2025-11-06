@@ -177,7 +177,7 @@ jobs:
           retention-days: 14
 
   build_and_dast:
-    name: DAST (ZAP) — start app only for tests (uv, no Docker backend)
+    name: DAST (ZAP) — start app only for tests (uv)
     runs-on: ubuntu-latest
     needs: [sast_sca]
     timeout-minutes: 45
@@ -202,7 +202,7 @@ jobs:
       - name: Prepare reports dir
         run: mkdir -p reports/dast
 
-      # ---- Install uv (jak w Twoim Dockerfile) + cache ----
+      # ---- Install uv (jak w Dockerfile) + cache ----
       - name: Install uv
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -282,14 +282,20 @@ jobs:
           tail -n 200 backend.log || true
           exit 1
 
-      # ---- ZAP DAST (API Scan). Frontend baseline możesz dodać później ----
+      # ---- ZAP DAST (API Scan) ----
+      - name: Pre-pull ZAP image
+        run: docker pull ghcr.io/zaproxy/zaproxy:stable
+
       - name: ZAP API Scan (backend OpenAPI)
         run: |
-          docker run --rm -t -u zap -v "$PWD:/zap/wrk" owasp/zap2docker-stable zap-api-scan.py \
-            -t "${{ env.API_OPENAPI_URL }}" \
-            -f openapi \
-            -m 15 \
-            -r zap-api.html | tee zap-api.log
+          docker run --rm -t -u zap \
+            -v "$PWD:/zap/wrk" -w /zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py \
+              -t "${{ env.API_OPENAPI_URL }}" \
+              -f openapi \
+              -m 15 \
+              -r zap-api.html | tee zap-api.log
 
       # ---- (opcjonalnie) fail przy High ----
       - name: Enforce thresholds (fail on HIGH)
@@ -324,3 +330,4 @@ jobs:
           path: reports/**
           if-no-files-found: ignore
           retention-days: 14
+          overwrite: true
