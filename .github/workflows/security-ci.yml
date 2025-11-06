@@ -7,6 +7,10 @@ on:
     types: [ opened, synchronize, reopened ]
   workflow_dispatch: {}
 
+concurrency:
+  group: security-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   security-events: write
@@ -15,14 +19,23 @@ permissions:
 env:
   FRONT_URL: http://localhost:5173
   API_OPENAPI_URL: http://localhost:8000/api/v1/openapi.json
+  DOCKER_BUILDKIT: "1"
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   sast_sca:
     name: SAST + SCA
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Prepare reports dir
+        run: mkdir -p reports/sast reports/sca
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -48,11 +61,16 @@ jobs:
             p/ci
           generateSarif: "1"
 
-      - name: Upload Semgrep SARIF
+      - name: Upload Semgrep SARIF to Code Scanning
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
+
+      - name: Collect Semgrep report
+        if: always()
+        run: |
+          cp -f semgrep.sarif reports/sast/semgrep.sarif 2>/dev/null || true
 
       # -------- SAST: Bandit --------
       - name: Install Bandit
@@ -63,12 +81,10 @@ jobs:
         continue-on-error: true
         run: bandit -r backend -ll -iii -f json -o bandit.json
 
-      - name: Upload Bandit report
+      - name: Collect Bandit report
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bandit-report
-          path: bandit.json
+        run: |
+          cp -f bandit.json reports/sast/bandit.json 2>/dev/null || true
 
       # -------- SCA: Trivy (repo) -> SARIF --------
       - name: Trivy FS (SCA + misconfig + secrets)
@@ -82,11 +98,16 @@ jobs:
           format: sarif
           output: trivy-repo.sarif
 
-      - name: Upload Trivy SARIF
+      - name: Upload Trivy SARIF to Code Scanning
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-repo.sarif
+
+      - name: Collect Trivy SARIF
+        if: always()
+        run: |
+          cp -f trivy-repo.sarif reports/sca/trivy-repo.sarif 2>/dev/null || true
 
       # -------- SBOM: Trivy (CycloneDX) --------
       - name: Trivy SBOM (CycloneDX)
@@ -97,12 +118,10 @@ jobs:
           scan-ref: .
           args: --format cyclonedx --output sbom.cdx.json
 
-      - name: Upload SBOM
+      - name: Collect SBOM
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-cyclonedx
-          path: sbom.cdx.json
+        run: |
+          cp -f sbom.cdx.json reports/sca/sbom.cyclonedx.json 2>/dev/null || true
 
       # -------- SCA: Python (pip-audit) --------
       - name: Install pip-audit
@@ -118,12 +137,10 @@ jobs:
             echo '{}' > pip-audit.json
           fi
 
-      - name: Upload pip-audit report
+      - name: Collect pip-audit report
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pip-audit-report
-          path: pip-audit.json
+        run: |
+          cp -f pip-audit.json reports/sca/pip-audit.json 2>/dev/null || true
 
       # -------- Frontend: lint + npm audit --------
       - name: Frontend install
@@ -144,22 +161,35 @@ jobs:
         working-directory: frontend
         run: npm audit --audit-level=high --json > ../npm-audit.json
 
-      - name: Upload npm-audit report
+      - name: Collect npm-audit
         if: always() && hashFiles('frontend/package.json') != ''
+        run: |
+          cp -f npm-audit.json reports/sca/npm-audit.json 2>/dev/null || true
+
+      # ---- Upload ONE artifact with everything from this job ----
+      - name: Upload consolidated reports (SAST/SCA)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: npm-audit-report
-          path: npm-audit.json
+          name: security-reports
+          path: reports/**
+          if-no-files-found: ignore
+          retention-days: 14
 
   build_and_dast:
     name: DAST (ZAP) on docker-compose
     runs-on: ubuntu-latest
     needs: [sast_sca]
-    if: always()   # uruchom nawet jeśli SAST/SCA miało błędy
+    if: always()
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Prepare reports dir
+        run: mkdir -p reports/dast
+
+      # Minimalny .env tylko do CI (podmień, jeśli masz sekrety w Actions)
       - name: Create .env for CI
         continue-on-error: true
         run: |
@@ -230,14 +260,21 @@ jobs:
             -f openapi \
             -r zap-api.html
 
-      - name: Upload ZAP reports
+      - name: Collect ZAP reports
+        if: always()
+        run: |
+          cp -f zap-frontend.html reports/dast/zap-frontend.html 2>/dev/null || true
+          cp -f zap-api.html reports/dast/zap-api.html 2>/dev/null || true
+
+      # ---- Upload to the SAME artifact name (will merge) ----
+      - name: Upload consolidated reports (DAST)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zap-reports
-          path: |
-            zap-frontend.html
-            zap-api.html
+          name: security-reports        # ten sam artefakt co w jobie SAST/SCA
+          path: reports/**
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Teardown
         if: always()
