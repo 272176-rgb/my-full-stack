@@ -299,6 +299,14 @@ jobs:
               -m 15 \
               -r zap-api.html | tee zap-api.log
 
+      - name: Debug (on failure)
+        if: failure()
+        run: |
+          echo "---- backend.log (tail) ----"
+          tail -n 200 backend.log || true
+          echo "---- zap-api.log (tail) ----"
+          tail -n 200 zap-api.log || true
+
       - name: ZAP API Scan (backend OpenAPI)
         run: |
           docker run --rm -t -u zap \
