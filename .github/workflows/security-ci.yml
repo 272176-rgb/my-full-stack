@@ -286,6 +286,19 @@ jobs:
       - name: Pre-pull ZAP image
         run: docker pull ghcr.io/zaproxy/zaproxy:stable
 
+      - name: ZAP API Scan (backend OpenAPI) — host network
+        run: |
+          set -e
+          # podejście 1: host network (najprostsze na GH-hosted Linux runners)
+          docker run --rm -t --network host \
+            -v "$PWD:/zap/wrk" -w /zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py \
+              -t "http://127.0.0.1:8000/api/v1/openapi.json" \
+              -f openapi \
+              -m 15 \
+              -r zap-api.html | tee zap-api.log
+
       - name: ZAP API Scan (backend OpenAPI)
         run: |
           docker run --rm -t -u zap \
